@@ -86,7 +86,6 @@
         .upgrade-icon {
             width: 30px;
             height: 30px;
-            background: #fff;
             margin-right: 10px;
         }
     </style>
@@ -121,13 +120,17 @@
                     <div class="upgrade-icon" style="background: #0f0;"></div>
                     <span>Wider Paddle</span>
                 </div>
-                <div class="upgrade-option" onclick="selectUpgrade('ballSpeed')">
-                    <div class="upgrade-icon" style="background: #ff0;"></div>
-                    <span>Faster Ball</span>
-                </div>
-                <div class="upgrade-option" onclick="selectUpgrade('extraLife')">
+                <div class="upgrade-option" onclick="selectUpgrade('fireBall')">
                     <div class="upgrade-icon" style="background: #f00;"></div>
-                    <span>Extra Life</span>
+                    <span>Fire Ball (Pierces Bricks)</span>
+                </div>
+                <div class="upgrade-option" onclick="selectUpgrade('explosiveBall')">
+                    <div class="upgrade-icon" style="background: #ff0;"></div>
+                    <span>Explosive Ball</span>
+                </div>
+                <div class="upgrade-option" onclick="selectUpgrade('doubleBall')">
+                    <div class="upgrade-icon" style="background: #00f;"></div>
+                    <span>Double Ball</span>
                 </div>
             </div>
         </div>
@@ -183,15 +186,17 @@
             dx: 0
         };
 
-        // Ball
-        const ball = {
+        // Balls (supporting multiple balls)
+        let balls = [{
             x: canvas.width / 2,
             y: canvas.height - 40,
             radius: 10,
             speed: 5,
             dx: 5,
-            dy: -5
-        };
+            dy: -5,
+            isFire: false,
+            isExplosive: false
+        }];
 
         // Bricks
         const brickRowCount = 5;
@@ -353,12 +358,20 @@
             ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
         }
 
-        function drawBall() {
-            ctx.beginPath();
-            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-            ctx.fillStyle = '#fff';
-            ctx.fill();
-            ctx.closePath();
+        function drawBalls() {
+            balls.forEach(ball => {
+                ctx.beginPath();
+                ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+                ctx.fillStyle = ball.isFire ? '#f00' : ball.isExplosive ? '#ff0' : '#fff';
+                if (ball.isFire) {
+                    // Add fiery trail effect
+                    ctx.shadowBlur = 20;
+                    ctx.shadowColor = '#f00';
+                }
+                ctx.fill();
+                ctx.shadowBlur = 0; // Reset shadow
+                ctx.closePath();
+            });
         }
 
         function drawBricks() {
@@ -383,14 +396,22 @@
                     const b = bricks[c][r];
                     if (b.status === 1) {
                         bricksRemaining++;
-                        if (ball.x > b.x && ball.x < b.x + brickWidth &&
-                            ball.y > b.y && ball.y < b.y + brickHeight) {
-                            ball.dy = -ball.dy;
-                            b.status = 0;
-                            score += 10;
-                            updateGameInfo();
-                            saveScore();
-                        }
+                        balls.forEach(ball => {
+                            if (ball.x > b.x && ball.x < b.x + brickWidth &&
+                                ball.y > b.y && ball.y < b.y + brickHeight) {
+                                if (!ball.isFire) {
+                                    ball.dy = -ball.dy; // Normal ball bounces
+                                }
+                                b.status = 0;
+                                score += 10;
+                                updateGameInfo();
+                                saveScore();
+                                if (ball.isExplosive) {
+                                    explode(ball.x, ball.y);
+                                    ball.isExplosive = false; // One-time effect
+                                }
+                            }
+                        });
                     }
                 }
             }
@@ -399,15 +420,43 @@
             }
         }
 
+        function explode(x, y) {
+            const explosionRadius = 50;
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    const b = bricks[c][r];
+                    if (b.status === 1) {
+                        const dist = Math.hypot(b.x + brickWidth / 2 - x, b.y + brickHeight / 2 - y);
+                        if (dist < explosionRadius) {
+                            b.status = 0;
+                            score += 5;
+                            updateGameInfo();
+                            saveScore();
+                        }
+                    }
+                }
+            }
+        }
+
         function levelUp() {
             level++;
             initBricks();
-            ball.x = canvas.width / 2;
-            ball.y = canvas.height - 40;
-            ball.dx = 5 * (1 + level * 0.1);
-            ball.dy = -5 * (1 + level * 0.1);
+            resetBalls();
             gameRunning = false;
             showUpgradeModal();
+        }
+
+        function resetBalls() {
+            balls = [{
+                x: canvas.width / 2,
+                y: canvas.height - 40,
+                radius: 10,
+                speed: 5 * (1 + level * 0.1),
+                dx: 5 * (1 + level * 0.1),
+                dy: -5 * (1 + level * 0.1),
+                isFire: false,
+                isExplosive: false
+            }];
         }
 
         function showUpgradeModal() {
@@ -420,13 +469,23 @@
                 case 'paddleWidth':
                     paddle.width += 20;
                     break;
-                case 'ballSpeed':
-                    ball.speed += 1;
-                    ball.dx *= 1.2;
-                    ball.dy *= 1.2;
+                case 'fireBall':
+                    balls[0].isFire = true;
                     break;
-                case 'extraLife':
-                    lives++;
+                case 'explosiveBall':
+                    balls[0].isExplosive = true;
+                    break;
+                case 'doubleBall':
+                    balls.push({
+                        x: balls[0].x,
+                        y: balls[0].y,
+                        radius: 10,
+                        speed: balls[0].speed,
+                        dx: -balls[0].dx,
+                        dy: balls[0].dy,
+                        isFire: false,
+                        isExplosive: false
+                    });
                     break;
             }
             document.getElementById('upgradeModal').classList.remove('show');
@@ -444,13 +503,35 @@
             if (paddle.x < 0) paddle.x = 0;
         }
 
-        function moveBall() {
-            ball.x += ball.dx;
-            ball.y += ball.dy;
+        function moveBalls() {
+            balls = balls.filter(ball => {
+                ball.x += ball.dx;
+                ball.y += ball.dy;
 
-            if (ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) ball.dx = -ball.dx;
-            if (ball.y - ball.radius < 0) ball.dy = -ball.dy;
-            if (ball.y + ball.radius > canvas.height) {
+                if (ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) ball.dx = -ball.dx;
+                if (ball.y - ball.radius < 0) ball.dy = -ball.dy;
+
+                // Check if ball is below the canvas
+                if (ball.y - ball.radius > canvas.height) {
+                    return false; // Remove ball if it falls below
+                }
+
+                // Paddle collision
+                if (ball.y + ball.radius > paddle.y && 
+                    ball.y - ball.radius < paddle.y + paddle.height &&
+                    ball.x > paddle.x && 
+                    ball.x < paddle.x + paddle.width) {
+                    const hitPoint = (ball.x - paddle.x) / paddle.width; // 0 to 1
+                    const maxAngle = Math.PI / 3; // 60 degrees max angle
+                    const angle = (hitPoint - 0.5) * 2 * maxAngle; // -maxAngle to +maxAngle
+                    const totalSpeed = Math.hypot(ball.dx, ball.dy) + Math.abs(paddle.dx) * 0.1; // Add paddle momentum
+                    ball.dx = totalSpeed * Math.sin(angle);
+                    ball.dy = -totalSpeed * Math.cos(angle);
+                }
+                return true;
+            });
+
+            if (balls.length === 0) {
                 lives--;
                 updateGameInfo();
                 if (lives <= 0) {
@@ -458,14 +539,9 @@
                     alert('Game Over! Final Score: ' + score);
                     resetGame();
                 } else {
-                    ball.x = canvas.width / 2;
-                    ball.y = canvas.height - 40;
-                    ball.dy = -ball.speed;
+                    resetBalls();
+                    gameRunning = false; // Pause until player resumes
                 }
-            }
-
-            if (ball.y + ball.radius > paddle.y && ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
-                ball.dy = -ball.dy;
             }
         }
 
@@ -474,21 +550,20 @@
             lives = 3;
             level = 1;
             paddle.width = 100;
-            ball.speed = 5;
-            ball.dx = 5;
-            ball.dy = -5;
+            resetBalls();
             initBricks();
             updateGameInfo();
+            gameRunning = false; // Ensure game starts paused
         }
 
         function draw() {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             drawPaddle();
-            drawBall();
+            drawBalls();
             drawBricks();
             collisionDetection();
             movePaddle();
-            moveBall();
+            moveBalls();
             if (gameRunning) requestAnimationFrame(draw);
         }
 
