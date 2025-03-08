@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Breakout</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #000;
+            color: #fff;
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        canvas {
+            background: #111;
+            border: 2px solid #4e15ac;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%;
+            max-width: 400px;
+            background: #111;
+            border: 3px solid #4e15ac;
+            color: #0f0;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .modal.show {
+            display: block;
+        }
+
+        button {
+            background: #222;
+            color: #0f0;
+            border: 2px solid #4e15ac;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        .top-right {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 12px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        #scoreDisplay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loginPopup" class="modal">
+        <div class="modal-content">
+            <h2>Login</h2>
+            <form id="loginForm">
+                <input type="email" id="email" placeholder="Email" required>
+                <input type="password" id="password" placeholder="Password" required>
+                <button type="submit">Login</button>
+            </form>
+            <div id="loginError"></div>
+            <h2>Sign Up</h2>
+            <form id="signupForm">
+                <input type="text" id="signupNickname" placeholder="Nickname" required>
+                <input type="email" id="signupEmail" placeholder="Email" required>
+                <input type="password" id="signupPassword" placeholder="Password" required>
+                <button type="submit">Sign Up</button>
+            </form>
+            <button id="closeLoginPopup">Close</button>
+            <div id="signupError"></div>
+        </div>
+    </div>
+
+    <div class="top-right" id="loginContainer">
+        <button id="loginButton">Login</button>
+    </div>
+
+    <div class="top-right hidden" id="userInfo">
+        <span id="userNickname"></span>
+        <button id="logoutButton">Logout</button>
+    </div>
+
+    <div id="scoreDisplay">Score: 0</div>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-firestore-compat.js"></script>
+    <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+    <script src="js/jwt-decode-min.js"></script>
+
+    <script>
+        // Firebase Configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyCvgdn8c6D8RusKRr4vHAzFj1x4FNxrXVE",
+            authDomain: "infinite-games-9c69e.firebaseapp.com",
+            projectId: "infinite-games-9c69e",
+            storageBucket: "infinite-games-9c69e.appspot.com",
+            messagingSenderId: "602022483888",
+            appId: "1:602022483888:web:f967a6c1cb236ae66ba875",
+            measurementId: "G-9LE6E1BKZ7"
+        };
+
+        // Game Variables
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let score = 0;
+        let userId = null;
+        let crazyGamesMode = false;
+        let sdkReady = false;
+
+        // Paddle
+        const paddle = {
+            width: 100,
+            height: 10,
+            x: canvas.width / 2 - 50,
+            y: canvas.height - 30,
+            speed: 8,
+            dx: 0
+        };
+
+        // Ball
+        const ball = {
+            x: canvas.width / 2,
+            y: canvas.height - 40,
+            radius: 10,
+            speed: 5,
+            dx: 5,
+            dy: -5
+        };
+
+        // Bricks
+        const brickRowCount = 5;
+        const brickColumnCount = 9;
+        const brickWidth = 75;
+        const brickHeight = 20;
+        const brickPadding = 10;
+        const brickOffsetTop = 30;
+        const brickOffsetLeft = 30;
+        const bricks = [];
+
+        // Initialize Bricks
+        for (let c = 0; c < brickColumnCount; c++) {
+            bricks[c] = [];
+            for (let r = 0; r < brickRowCount; r++) {
+                bricks[c][r] = { x: 0, y: 0, status: 1 };
+            }
+        }
+
+        // Game State
+        let gameRunning = false;
+        let keys = {};
+
+        // Firebase and CrazyGames Initialization
+        const app = firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        async function initializeCrazyGamesSDK() {
+            try {
+                await window.CrazyGames.SDK.init();
+                sdkReady = true;
+                crazyGamesMode = true;
+                await checkCrazyGamesUser();
+            } catch (error) {
+                console.error('CrazyGames SDK init failed:', error);
+                crazyGamesMode = false;
+            }
+        }
+
+        async function checkCrazyGamesUser() {
+            if (!sdkReady) return;
+            try {
+                const user = await window.CrazyGames.SDK.user.getUserToken();
+                const decodedToken = jwt_decode(user);
+                if (decodedToken && decodedToken.userId) {
+                    handleUserLogin('cg_' + decodedToken.userId, decodedToken.username);
+                }
+            } catch (error) {
+                console.error('Error checking CrazyGames user:', error);
+            }
+        }
+
+        // Authentication Handlers
+        function handleUserLogin(id, username) {
+            userId = id;
+            document.getElementById('userNickname').textContent = username;
+            document.getElementById('userInfo').classList.remove('hidden');
+            document.getElementById('loginContainer').classList.add('hidden');
+            localStorage.setItem('userId', id);
+            loadUserData(id);
+        }
+
+        document.getElementById('loginButton').addEventListener('click', () => {
+            if (crazyGamesMode) {
+                window.CrazyGames.SDK.user.showAuthPrompt().then(user => {
+                    if (user && user.userId) {
+                        handleUserLogin('cg_' + user.userId, user.username);
+                    }
+                }).catch(err => {
+                    document.getElementById('loginPopup').classList.add('show');
+                });
+            } else {
+                document.getElementById('loginPopup').classList.add('show');
+            }
+        });
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            try {
+                const userCredential = await auth.signInWithEmailAndPassword(email, password);
+                handleUserLogin(userCredential.user.uid, email.split('@')[0]);
+                document.getElementById('loginPopup').classList.remove('show');
+            } catch (error) {
+                document.getElementById('loginError').textContent = error.message;
+            }
+        });
+
+        document.getElementById('signupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            const nickname = document.getElementById('signupNickname').value;
+            try {
+                const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                await db.collection('users').doc(userCredential.user.uid).set({
+                    nickname: nickname,
+                    email: email,
+                    highScore: 0
+                });
+                handleUserLogin(userCredential.user.uid, nickname);
+                document.getElementById('loginPopup').classList.remove('show');
+            } catch (error) {
+                document.getElementById('signupError').textContent = error.message;
+            }
+        });
+
+        document.getElementById('closeLoginPopup').addEventListener('click', () => {
+            document.getElementById('loginPopup').classList.remove('show');
+        });
+
+        document.getElementById('logoutButton').addEventListener('click', async () => {
+            if (crazyGamesMode) {
+                userId = null;
+            } else {
+                await auth.signOut();
+            }
+            document.getElementById('userInfo').classList.add('hidden');
+            document.getElementById('loginContainer').classList.remove('hidden');
+            localStorage.removeItem('userId');
+        });
+
+        auth.onAuthStateChanged(user => {
+            if (user && !crazyGamesMode) {
+                handleUserLogin(user.uid, user.email.split('@')[0]);
+            }
+        });
+
+        // Load User Data
+        async function loadUserData(id) {
+            const userDoc = await db.collection('users').doc(id).get();
+            if (userDoc.exists) {
+                const data = userDoc.data();
+                if (data.highScore > score) {
+                    score = data.highScore;
+                    updateScoreDisplay();
+                }
+            }
+        }
+
+        // Save Score
+        async function saveScore() {
+            if (!userId) return;
+            const userRef = db.collection('users').doc(userId);
+            const userDoc = await userRef.get();
+            if (userDoc.exists && score > userDoc.data().highScore) {
+                await userRef.update({ highScore: score });
+            }
+        }
+
+        // Game Logic
+        function drawPaddle() {
+            ctx.fillStyle = '#0f0';
+            ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+        }
+
+        function drawBall() {
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function drawBricks() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    if (bricks[c][r].status === 1) {
+                        const brickX = c * (brickWidth + brickPadding) + brickOffsetLeft;
+                        const brickY = r * (brickHeight + brickPadding) + brickOffsetTop;
+                        bricks[c][r].x = brickX;
+                        bricks[c][r].y = brickY;
+                        ctx.fillStyle = '#800080';
+                        ctx.fillRect(brickX, brickY, brickWidth, brickHeight);
+                    }
+                }
+            }
+        }
+
+        function collisionDetection() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                for (let r = 0; r < brickRowCount; r++) {
+                    const b = bricks[c][r];
+                    if (b.status === 1) {
+                        if (ball.x > b.x && ball.x < b.x + brickWidth &&
+                            ball.y > b.y && ball.y < b.y + brickHeight) {
+                            ball.dy = -ball.dy;
+                            b.status = 0;
+                            score += 10;
+                            updateScoreDisplay();
+                            saveScore();
+                        }
+                    }
+                }
+            }
+        }
+
+        function updateScoreDisplay() {
+            document.getElementById('scoreDisplay').textContent = `Score: ${score}`;
+        }
+
+        function movePaddle() {
+            paddle.x += paddle.dx;
+            if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
+            if (paddle.x < 0) paddle.x = 0;
+        }
+
+        function moveBall() {
+            ball.x += ball.dx;
+            ball.y += ball.dy;
+
+            if (ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) ball.dx = -ball.dx;
+            if (ball.y - ball.radius < 0) ball.dy = -ball.dy;
+            if (ball.y + ball.radius > canvas.height) {
+                ball.x = canvas.width / 2;
+                ball.y = canvas.height - 40;
+                ball.dy = -ball.dy;
+            }
+
+            if (ball.y + ball.radius > paddle.y && ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
+                ball.dy = -ball.dy;
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawPaddle();
+            drawBall();
+            drawBricks();
+            collisionDetection();
+            movePaddle();
+            moveBall();
+            if (gameRunning) requestAnimationFrame(draw);
+        }
+
+        // Event Listeners
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft') paddle.dx = -paddle.speed;
+            if (e.key === 'ArrowRight') paddle.dx = paddle.speed;
+            if (e.key === ' ' && !gameRunning) {
+                gameRunning = true;
+                draw();
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') paddle.dx = 0;
+        });
+
+        // Initialize
+        window.onload = () => {
+            initializeCrazyGamesSDK();
+            const storedUserId = localStorage.getItem('userId');
+            if (storedUserId) loadUserData(storedUserId);
+            draw();
+        };
+    </script>
+</body>
+
+</html>
