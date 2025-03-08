@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html>
-
 <head>
     <title>Breakout</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -64,15 +63,34 @@
             display: none;
         }
 
-        #scoreDisplay {
+        #gameInfo {
             position: absolute;
             top: 10px;
             left: 10px;
             font-size: 14px;
         }
+
+        .upgrade-option {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 5px;
+            background: rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+        }
+
+        .upgrade-option:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .upgrade-icon {
+            width: 30px;
+            height: 30px;
+            background: #fff;
+            margin-right: 10px;
+        }
     </style>
 </head>
-
 <body>
     <div id="loginPopup" class="modal">
         <div class="modal-content">
@@ -95,6 +113,26 @@
         </div>
     </div>
 
+    <div id="upgradeModal" class="modal">
+        <div class="modal-content">
+            <h2>Level Up! Choose an Upgrade</h2>
+            <div id="upgradeOptions">
+                <div class="upgrade-option" onclick="selectUpgrade('paddleWidth')">
+                    <div class="upgrade-icon" style="background: #0f0;"></div>
+                    <span>Wider Paddle</span>
+                </div>
+                <div class="upgrade-option" onclick="selectUpgrade('ballSpeed')">
+                    <div class="upgrade-icon" style="background: #ff0;"></div>
+                    <span>Faster Ball</span>
+                </div>
+                <div class="upgrade-option" onclick="selectUpgrade('extraLife')">
+                    <div class="upgrade-icon" style="background: #f00;"></div>
+                    <span>Extra Life</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="top-right" id="loginContainer">
         <button id="loginButton">Login</button>
     </div>
@@ -104,7 +142,7 @@
         <button id="logoutButton">Logout</button>
     </div>
 
-    <div id="scoreDisplay">Score: 0</div>
+    <div id="gameInfo">Score: 0 | Lives: 3 | Level: 1</div>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
     <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
@@ -129,6 +167,8 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         let score = 0;
+        let lives = 3;
+        let level = 1;
         let userId = null;
         let crazyGamesMode = false;
         let sdkReady = false;
@@ -163,17 +203,20 @@
         const brickOffsetLeft = 30;
         const bricks = [];
 
-        // Initialize Bricks
-        for (let c = 0; c < brickColumnCount; c++) {
-            bricks[c] = [];
-            for (let r = 0; r < brickRowCount; r++) {
-                bricks[c][r] = { x: 0, y: 0, status: 1 };
-            }
-        }
-
         // Game State
         let gameRunning = false;
         let keys = {};
+
+        // Initialize Bricks
+        function initBricks() {
+            for (let c = 0; c < brickColumnCount; c++) {
+                bricks[c] = [];
+                for (let r = 0; r < brickRowCount; r++) {
+                    bricks[c][r] = { x: 0, y: 0, status: 1 };
+                }
+            }
+        }
+        initBricks();
 
         // Firebase and CrazyGames Initialization
         const app = firebase.initializeApp(firebaseConfig);
@@ -221,7 +264,7 @@
                     if (user && user.userId) {
                         handleUserLogin('cg_' + user.userId, user.username);
                     }
-                }).catch(err => {
+                }).catch(() => {
                     document.getElementById('loginPopup').classList.add('show');
                 });
             } else {
@@ -289,7 +332,7 @@
                 const data = userDoc.data();
                 if (data.highScore > score) {
                     score = data.highScore;
-                    updateScoreDisplay();
+                    updateGameInfo();
                 }
             }
         }
@@ -334,25 +377,65 @@
         }
 
         function collisionDetection() {
+            let bricksRemaining = 0;
             for (let c = 0; c < brickColumnCount; c++) {
                 for (let r = 0; r < brickRowCount; r++) {
                     const b = bricks[c][r];
                     if (b.status === 1) {
+                        bricksRemaining++;
                         if (ball.x > b.x && ball.x < b.x + brickWidth &&
                             ball.y > b.y && ball.y < b.y + brickHeight) {
                             ball.dy = -ball.dy;
                             b.status = 0;
                             score += 10;
-                            updateScoreDisplay();
+                            updateGameInfo();
                             saveScore();
                         }
                     }
                 }
             }
+            if (bricksRemaining === 0) {
+                levelUp();
+            }
         }
 
-        function updateScoreDisplay() {
-            document.getElementById('scoreDisplay').textContent = `Score: ${score}`;
+        function levelUp() {
+            level++;
+            initBricks();
+            ball.x = canvas.width / 2;
+            ball.y = canvas.height - 40;
+            ball.dx = 5 * (1 + level * 0.1);
+            ball.dy = -5 * (1 + level * 0.1);
+            gameRunning = false;
+            showUpgradeModal();
+        }
+
+        function showUpgradeModal() {
+            document.getElementById('upgradeModal').classList.add('show');
+            gameRunning = false;
+        }
+
+        function selectUpgrade(type) {
+            switch (type) {
+                case 'paddleWidth':
+                    paddle.width += 20;
+                    break;
+                case 'ballSpeed':
+                    ball.speed += 1;
+                    ball.dx *= 1.2;
+                    ball.dy *= 1.2;
+                    break;
+                case 'extraLife':
+                    lives++;
+                    break;
+            }
+            document.getElementById('upgradeModal').classList.remove('show');
+            gameRunning = true;
+            draw();
+        }
+
+        function updateGameInfo() {
+            document.getElementById('gameInfo').textContent = `Score: ${score} | Lives: ${lives} | Level: ${level}`;
         }
 
         function movePaddle() {
@@ -368,14 +451,34 @@
             if (ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) ball.dx = -ball.dx;
             if (ball.y - ball.radius < 0) ball.dy = -ball.dy;
             if (ball.y + ball.radius > canvas.height) {
-                ball.x = canvas.width / 2;
-                ball.y = canvas.height - 40;
-                ball.dy = -ball.dy;
+                lives--;
+                updateGameInfo();
+                if (lives <= 0) {
+                    gameRunning = false;
+                    alert('Game Over! Final Score: ' + score);
+                    resetGame();
+                } else {
+                    ball.x = canvas.width / 2;
+                    ball.y = canvas.height - 40;
+                    ball.dy = -ball.speed;
+                }
             }
 
             if (ball.y + ball.radius > paddle.y && ball.x > paddle.x && ball.x < paddle.x + paddle.width) {
                 ball.dy = -ball.dy;
             }
+        }
+
+        function resetGame() {
+            score = 0;
+            lives = 3;
+            level = 1;
+            paddle.width = 100;
+            ball.speed = 5;
+            ball.dx = 5;
+            ball.dy = -5;
+            initBricks();
+            updateGameInfo();
         }
 
         function draw() {
@@ -393,7 +496,7 @@
         document.addEventListener('keydown', (e) => {
             if (e.key === 'ArrowLeft') paddle.dx = -paddle.speed;
             if (e.key === 'ArrowRight') paddle.dx = paddle.speed;
-            if (e.key === ' ' && !gameRunning) {
+            if (e.key === ' ' && !gameRunning && !document.getElementById('upgradeModal').classList.contains('show')) {
                 gameRunning = true;
                 draw();
             }
@@ -412,5 +515,4 @@
         };
     </script>
 </body>
-
 </html>
