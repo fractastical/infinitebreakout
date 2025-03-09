@@ -120,6 +120,10 @@
                     <div class="upgrade-icon" style="background: #0f0;"></div>
                     <span>Wider Paddle</span>
                 </div>
+                <div class="upgrade-option" onclick="selectUpgrade('paddleSpeed')">
+                    <div class="upgrade-icon" style="background: #00ff00;"></div>
+                    <span>Faster Paddle</span>
+                </div>
                 <div class="upgrade-option" onclick="selectUpgrade('fireBall')">
                     <div class="upgrade-icon" style="background: #f00;"></div>
                     <span>Extra Fire Ball (Pierces)</span>
@@ -148,6 +152,13 @@
     <div id="gameInfo">Score: 0 | Lives: 3 | Level: 1</div>
     <canvas id="gameCanvas" width="800" height="600"></canvas>
 
+    <!-- Audio Elements -->
+    <audio id="paddleSound" preload="auto" src="sounds/paddle_blip.wav"></audio>
+    <audio id="brickSound" preload="auto" src="sounds/brick_pop.wav"></audio>
+    <audio id="fireballSound" preload="auto" src="sounds/fireball_whoosh.wav"></audio>
+    <audio id="explosionSound" preload="auto" src="sounds/explosion_boom.wav"></audio>
+    <audio id="levelUpSound" preload="auto" src="sounds/level_up_ding.wav"></audio>
+
     <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-firestore-compat.js"></script>
@@ -175,6 +186,13 @@
         let userId = null;
         let crazyGamesMode = false;
         let sdkReady = false;
+
+        // Audio Elements
+        const paddleSound = document.getElementById('paddleSound');
+        const brickSound = document.getElementById('brickSound');
+        const fireballSound = document.getElementById('fireballSound');
+        const explosionSound = document.getElementById('explosionSound');
+        const levelUpSound = document.getElementById('levelUpSound');
 
         // Paddle
         const paddle = {
@@ -207,7 +225,8 @@
         const brickOffsetTop = 30;
         const brickOffsetLeft = 30;
         const bricks = [];
-        const brickColors = ['#800080', '#ff4500', '#00ced1', '#ffd700', '#ff1493']; // Purple, Orange, Turquoise, Gold, Pink
+        const brickColors = ['#800080', '#ff4500', '#00ced1', '#ffd700', '#ff1493'];
+        const specialBrickColor = '#00ff00';
 
         // Explosion Visuals
         let explosions = [];
@@ -216,20 +235,39 @@
         let gameRunning = false;
         let keys = {};
 
-        // Initialize Bricks with Level-Based Types
+        // Initialize Bricks
         function initBricks() {
+            let specialBrickPlaced = false;
             for (let c = 0; c < brickColumnCount; c++) {
                 bricks[c] = [];
                 for (let r = 0; r < brickRowCount; r++) {
                     const brickType = Math.min(Math.floor(Math.random() * level), brickColors.length - 1);
+                    let isSpecial = false;
+                    if (level >= 2 && !specialBrickPlaced && Math.random() < 0.1) {
+                        isSpecial = true;
+                        specialBrickPlaced = true;
+                    }
                     bricks[c][r] = {
                         x: 0,
                         y: 0,
-                        status: brickType + 1, // Hitpoints: 1 for level 1, 2 for level 2, etc.
-                        type: brickType,
-                        color: brickColors[brickType]
+                        status: isSpecial ? 1 : brickType + 1,
+                        type: isSpecial ? -1 : brickType,
+                        color: isSpecial ? specialBrickColor : brickColors[brickType],
+                        isSpecial: isSpecial
                     };
                 }
+            }
+            if (level >= 2 && !specialBrickPlaced) {
+                const c = Math.floor(Math.random() * brickColumnCount);
+                const r = Math.floor(Math.random() * brickRowCount);
+                bricks[c][r] = {
+                    x: 0,
+                    y: 0,
+                    status: 1,
+                    type: -1,
+                    color: specialBrickColor,
+                    isSpecial: true
+                };
             }
         }
         initBricks();
@@ -395,7 +433,6 @@
                         b.y = brickY;
                         ctx.fillStyle = b.color;
                         ctx.fillRect(brickX, brickY, brickWidth, brickHeight);
-                        // Show hitpoints
                         ctx.fillStyle = '#fff';
                         ctx.font = '12px "Press Start 2P"';
                         ctx.textAlign = 'center';
@@ -406,239 +443,4 @@
         }
 
         function drawExplosions() {
-            explosions = explosions.filter(exp => exp.timer > 0);
-            explosions.forEach(exp => {
-                ctx.beginPath();
-                ctx.arc(exp.x, exp.y, exp.radius * (30 - exp.timer) / 30, 0, Math.PI * 2);
-                ctx.fillStyle = `rgba(255, 165, 0, ${exp.timer / 30})`;
-                ctx.fill();
-                ctx.closePath();
-                exp.timer--;
-            });
-        }
-
-        function collisionDetection() {
-            let bricksRemaining = 0;
-            for (let c = 0; c < brickColumnCount; c++) {
-                for (let r = 0; r < brickRowCount; r++) {
-                    const b = bricks[c][r];
-                    if (b.status > 0) {
-                        bricksRemaining++;
-                        balls.forEach(ball => {
-                            if (ball.x > b.x && ball.x < b.x + brickWidth &&
-                                ball.y > b.y && ball.y < b.y + brickHeight) {
-                                if (ball.isFire) {
-                                    b.status = 0; // Fireball instantly destroys
-                                } else {
-                                    b.status--; // Normal or explosive reduces hitpoints
-                                    if (!ball.isExplosive) ball.dy = -ball.dy; // Normal ball bounces
-                                }
-                                if (b.status === 0) {
-                                    score += 10;
-                                    updateGameInfo();
-                                    saveScore();
-                                }
-                                if (ball.isExplosive && b.status === 0) {
-                                    explode(ball.x, ball.y);
-                                    ball.isExplosive = false;
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-            if (bricksRemaining === 0) {
-                levelUp();
-            }
-        }
-
-        function explode(x, y) {
-            const explosionRadius = 50;
-            explosions.push({ x, y, radius: explosionRadius, timer: 30 }); // 30 frames of animation
-            for (let c = 0; c < brickColumnCount; c++) {
-                for (let r = 0; r < brickRowCount; r++) {
-                    const b = bricks[c][r];
-                    if (b.status > 0) {
-                        const dist = Math.hypot(b.x + brickWidth / 2 - x, b.y + brickHeight / 2 - y);
-                        if (dist < explosionRadius) {
-                            b.status = 0;
-                            score += 5;
-                            updateGameInfo();
-                            saveScore();
-                        }
-                    }
-                }
-            }
-        }
-
-        function levelUp() {
-            level++;
-            initBricks();
-            resetBalls();
-            gameRunning = false;
-            showUpgradeModal();
-        }
-
-        function resetBalls() {
-            balls = [{
-                x: canvas.width / 2,
-                y: canvas.height - 40,
-                radius: 10,
-                speed: 5 * (1 + level * 0.1),
-                dx: 5 * (1 + level * 0.1),
-                dy: -5 * (1 + level * 0.1),
-                isFire: false,
-                isExplosive: false
-            }];
-        }
-
-        function showUpgradeModal() {
-            document.getElementById('upgradeModal').classList.add('show');
-            gameRunning = false;
-        }
-
-        function selectUpgrade(type) {
-            const baseBall = balls[0] || { x: canvas.width / 2, y: canvas.height - 40, speed: 5 * (1 + level * 0.1) };
-            switch (type) {
-                case 'paddleWidth':
-                    paddle.width += 20;
-                    break;
-                case 'fireBall':
-                    balls.push({
-                        x: baseBall.x,
-                        y: baseBall.y,
-                        radius: 10,
-                        speed: baseBall.speed,
-                        dx: baseBall.dx * (Math.random() > 0.5 ? 1 : -1),
-                        dy: -baseBall.speed,
-                        isFire: true,
-                        isExplosive: false
-                    });
-                    break;
-                case 'explosiveBall':
-                    balls.push({
-                        x: baseBall.x,
-                        y: baseBall.y,
-                        radius: 10,
-                        speed: baseBall.speed,
-                        dx: baseBall.dx * (Math.random() > 0.5 ? 1 : -1),
-                        dy: -baseBall.speed,
-                        isFire: false,
-                        isExplosive: true
-                    });
-                    break;
-                case 'doubleBall':
-                    balls.push({
-                        x: baseBall.x,
-                        y: baseBall.y,
-                        radius: 10,
-                        speed: baseBall.speed,
-                        dx: -baseBall.dx,
-                        dy: -baseBall.speed,
-                        isFire: false,
-                        isExplosive: false
-                    });
-                    break;
-            }
-            document.getElementById('upgradeModal').classList.remove('show');
-            gameRunning = true;
-            draw();
-        }
-
-        function updateGameInfo() {
-            document.getElementById('gameInfo').textContent = `Score: ${score} | Lives: ${lives} | Level: ${level}`;
-        }
-
-        function movePaddle() {
-            paddle.x += paddle.dx;
-            if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
-            if (paddle.x < 0) paddle.x = 0;
-        }
-
-        function moveBalls() {
-            balls = balls.filter(ball => {
-                ball.x += ball.dx;
-                ball.y += ball.dy;
-
-                if (ball.x + ball.radius > canvas.width || ball.x - ball.radius < 0) ball.dx = -ball.dx;
-                if (ball.y - ball.radius < 0) ball.dy = -ball.dy;
-
-                if (ball.y - ball.radius > canvas.height) {
-                    return false; // Remove ball if it falls below
-                }
-
-                if (ball.y + ball.radius > paddle.y && 
-                    ball.y - ball.radius < paddle.y + paddle.height &&
-                    ball.x > paddle.x && 
-                    ball.x < paddle.x + paddle.width) {
-                    const hitPoint = (ball.x - paddle.x) / paddle.width;
-                    const maxAngle = Math.PI / 3;
-                    const angle = (hitPoint - 0.5) * 2 * maxAngle;
-                    const totalSpeed = Math.hypot(ball.dx, ball.dy) + Math.abs(paddle.dx) * 0.1;
-                    ball.dx = totalSpeed * Math.sin(angle);
-                    ball.dy = -totalSpeed * Math.cos(angle);
-                }
-                return true;
-            });
-
-            if (balls.length === 0) {
-                lives--;
-                updateGameInfo();
-                if (lives <= 0) {
-                    gameRunning = false;
-                    alert('Game Over! Final Score: ' + score);
-                    resetGame();
-                } else {
-                    resetBalls();
-                    gameRunning = false;
-                }
-            }
-        }
-
-        function resetGame() {
-            score = 0;
-            lives = 3;
-            level = 1;
-            paddle.width = 100;
-            resetBalls();
-            initBricks();
-            updateGameInfo();
-            gameRunning = false;
-        }
-
-        function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            drawPaddle();
-            drawBalls();
-            drawBricks();
-            drawExplosions();
-            collisionDetection();
-            movePaddle();
-            moveBalls();
-            if (gameRunning) requestAnimationFrame(draw);
-        }
-
-        // Event Listeners
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'ArrowLeft') paddle.dx = -paddle.speed;
-            if (e.key === 'ArrowRight') paddle.dx = paddle.speed;
-            if (e.key === ' ' && !gameRunning && !document.getElementById('upgradeModal').classList.contains('show')) {
-                gameRunning = true;
-                draw();
-            }
-        });
-
-        document.addEventListener('keyup', (e) => {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') paddle.dx = 0;
-        });
-
-        // Initialize
-        window.onload = () => {
-            initializeCrazyGamesSDK();
-            const storedUserId = localStorage.getItem('userId');
-            if (storedUserId) loadUserData(storedUserId);
-            draw();
-        };
-    </script>
-</body>
-</html>
+            explosions
